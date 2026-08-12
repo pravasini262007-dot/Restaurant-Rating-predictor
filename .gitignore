@@ -1,0 +1,18 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local environment/editor files
+.idea/
+.vscode/
+
+# Data and model artifacts
+zomato.csv
+data/
+models/
+*.csv
+*.pkl
+*.joblib
+
+# Optional generated outputs
+*.log
