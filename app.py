@@ -8,12 +8,20 @@ and predicting restaurant ratings using trained regression models.
 
 import os
 import json
+from pathlib import Path
 import joblib
 import pandas as pd
 import numpy as np
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as io
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+
+def resolve_project_path(*parts):
+    """Resolve a file path relative to the project root."""
+    return str(PROJECT_ROOT.joinpath(*parts))
 
 # Set Streamlit Page Configuration
 st.set_page_config(
@@ -122,15 +130,15 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 @st.cache_data
 def load_clean_dataset():
     """Load and preprocess the dataset for analysis and visualization."""
-    data_paths = ['data/zomato.csv', 'zomato.csv', '../data/zomato.csv']
-    df_path = None
-    for p in data_paths:
-        if os.path.exists(p):
-            df_path = p
-            break
-            
+    data_paths = [
+        resolve_project_path('data', 'zomato.csv'),
+        resolve_project_path('zomato.csv'),
+        resolve_project_path('..', 'data', 'zomato.csv'),
+    ]
+    df_path = next((p for p in data_paths if os.path.exists(p)), None)
+
     if df_path is None:
-        return None, "Dataset file 'zomato.csv' not found. Please place it in data/ directory."
+        return None, "Dataset file 'zomato.csv' not found. Please place it in the project root or data/ folder."
 
     try:
         df = pd.read_csv(df_path)
@@ -158,8 +166,8 @@ def load_clean_dataset():
 @st.cache_resource
 def load_model_and_metadata():
     """Load joblib model pipeline and metadata JSON."""
-    model_path = 'models/restaurant_rating_model.pkl'
-    meta_path = 'models/metrics.json'
+    model_path = resolve_project_path('models', 'restaurant_rating_model.pkl')
+    meta_path = resolve_project_path('models', 'metrics.json')
 
     if not os.path.exists(model_path):
         return None, None, f"Model file '{model_path}' not found. Please run 'python train_model.py' first."
