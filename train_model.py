@@ -90,6 +90,10 @@ def load_and_preprocess_data(file_path):
         df['approx_cost'] = pd.to_numeric(df['Avg_Price_Restaurant'], errors='coerce')
     elif 'Prices' in df.columns:
         df['approx_cost'] = pd.to_numeric(df['Prices'], errors='coerce')
+    
+    # Impute missing cost with median
+    cost_median = df['approx_cost'].median() if not df['approx_cost'].isnull().all() else 500.0
+    df['approx_cost'] = df['approx_cost'].fillna(cost_median)
 
     # 4. Clean votes feature
     if 'votes' in df.columns:
@@ -142,12 +146,10 @@ def build_pipeline():
     cat_cols = ['online_order', 'book_table', 'location', 'rest_type', 'listed_in(type)']
 
     num_transformer = Pipeline([
-        ('imputer', SimpleImputer(strategy='median')),
         ('scaler', StandardScaler())
     ])
 
     cat_transformer = Pipeline([
-        ('imputer', SimpleImputer(strategy='most_frequent')),
         ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
     ])
 

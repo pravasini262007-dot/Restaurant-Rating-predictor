@@ -582,6 +582,18 @@ def page_predict_rating(model, meta):
 
         try:
             prediction = model.predict(input_data)[0]
+        except (AttributeError, ValueError) as version_err:
+            st.info("🔄 Optimizing model pipeline compatibility for host environment...")
+            import train_model
+            train_model.main()
+            st.cache_resource.clear()
+            model, meta, _ = load_model_and_metadata()
+            prediction = model.predict(input_data)[0]
+        except Exception as e:
+            st.error(f"Error making rating prediction: {str(e)}")
+            return
+
+        try:
             # Clip predicted rating to valid rating boundaries [1.0, 5.0]
             prediction_clipped = np.clip(prediction, 1.0, 5.0)
 
