@@ -131,32 +131,71 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 def load_clean_dataset():
     """Load and preprocess the dataset for analysis and visualization."""
     data_paths = [
+        resolve_project_path('data', 'enhanced_zomato_dataset_clean.csv'),
+        resolve_project_path('enhanced_zomato_dataset_clean.csv'),
         resolve_project_path('data', 'zomato.csv'),
         resolve_project_path('zomato.csv'),
+        resolve_project_path('..', 'data', 'enhanced_zomato_dataset_clean.csv'),
         resolve_project_path('..', 'data', 'zomato.csv'),
     ]
     df_path = next((p for p in data_paths if os.path.exists(p)), None)
 
     if df_path is None:
-        return None, "Dataset file 'zomato.csv' not found. Please place it in the project root or data/ folder."
+        return None, "Dataset file 'enhanced_zomato_dataset_clean.csv' or 'zomato.csv' not found. Please place it in the project root or data/ folder."
 
     try:
         df = pd.read_csv(df_path)
         df = df.drop_duplicates()
         
         # Clean rate
-        df['rate_clean'] = df['rate'].astype(str).str.replace('NEW', '', regex=False)
-        df['rate_clean'] = df['rate_clean'].str.replace('-', '', regex=False)
-        df['rate_clean'] = df['rate_clean'].str.replace('/5', '', regex=False).str.strip()
-        df['rate_clean'] = pd.to_numeric(df['rate_clean'], errors='coerce')
+        if 'rate' in df.columns:
+            df['rate_clean'] = df['rate'].astype(str).str.replace('NEW', '', regex=False)
+            df['rate_clean'] = df['rate_clean'].str.replace('-', '', regex=False)
+            df['rate_clean'] = df['rate_clean'].str.replace('/5', '', regex=False).str.strip()
+            df['rate_clean'] = pd.to_numeric(df['rate_clean'], errors='coerce')
+        elif 'Average_Rating' in df.columns:
+            df['rate_clean'] = pd.to_numeric(df['Average_Rating'], errors='coerce')
+        elif 'Dining_Rating' in df.columns:
+            df['rate_clean'] = pd.to_numeric(df['Dining_Rating'], errors='coerce')
         
         # Clean approx cost
-        cost_col = 'approx_cost(for two people)' if 'approx_cost(for two people)' in df.columns else 'approx_cost'
-        df['approx_cost_clean'] = df[cost_col].astype(str).str.replace(',', '', regex=False).str.strip()
-        df['approx_cost_clean'] = pd.to_numeric(df['approx_cost_clean'], errors='coerce')
+        if 'approx_cost(for two people)' in df.columns:
+            cost_col = 'approx_cost(for two people)'
+            df['approx_cost_clean'] = df[cost_col].astype(str).str.replace(',', '', regex=False).str.strip()
+            df['approx_cost_clean'] = pd.to_numeric(df['approx_cost_clean'], errors='coerce')
+        elif 'approx_cost' in df.columns:
+            df['approx_cost_clean'] = pd.to_numeric(df['approx_cost'].astype(str).str.replace(',', '', regex=False).str.strip(), errors='coerce')
+        elif 'Avg_Price_Restaurant' in df.columns:
+            df['approx_cost_clean'] = pd.to_numeric(df['Avg_Price_Restaurant'], errors='coerce')
+        elif 'Prices' in df.columns:
+            df['approx_cost_clean'] = pd.to_numeric(df['Prices'], errors='coerce')
 
         # Clean votes
-        df['votes_clean'] = pd.to_numeric(df['votes'], errors='coerce').fillna(0)
+        if 'votes' in df.columns:
+            df['votes_clean'] = pd.to_numeric(df['votes'], errors='coerce').fillna(0)
+        elif 'Total_Votes' in df.columns:
+            df['votes_clean'] = pd.to_numeric(df['Total_Votes'], errors='coerce').fillna(0)
+        elif 'Votes' in df.columns:
+            df['votes_clean'] = pd.to_numeric(df['Votes'], errors='coerce').fillna(0)
+
+        # Standardize location, rest_type, online_order if missing
+        if 'location' not in df.columns:
+            if 'Place_Name' in df.columns:
+                df['location'] = df['Place_Name']
+            elif 'City' in df.columns:
+                df['location'] = df['City']
+
+        if 'rest_type' not in df.columns:
+            if 'Cuisine' in df.columns:
+                df['rest_type'] = df['Cuisine']
+
+        if 'online_order' not in df.columns:
+            if 'Is_Bestseller' in df.columns:
+                df['online_order'] = df['Is_Bestseller'].map({1: 'Yes', 0: 'No'})
+            elif 'Best_Seller' in df.columns:
+                df['online_order'] = df['Best_Seller'].apply(lambda x: 'Yes' if str(x).upper() in ['YES', 'BESTSELLER', 'MUST TRY'] else 'No')
+            else:
+                df['online_order'] = 'No'
 
         return df, None
     except Exception as e:
@@ -287,12 +326,15 @@ def page_home(df, meta):
     t5.markdown("**⚡ Streamlit**\nDeployment UI")
 
 
-def page_dataset_analysis(df):
+def page_dataset_analysis(df, df_err=None):
     st.title("📊 Dataset Analysis & Exploration")
     st.write("Inspect the underlying Zomato dataset structure, missing value statistics, and summary distributions.")
 
     if df is None:
-        st.error("Dataset not available.")
+        st.error(df_err or "Dataset not available. Please ensure 'data/enhanced_zomato_dataset_clean.csv' is present in the project directory.")
+        if st.button("🔄 Clear Cache & Reload Data", key="reload_analysis"):
+            st.cache_data.clear()
+            st.rerun()
         return
 
     # Overview Metrics
@@ -333,12 +375,15 @@ def page_dataset_analysis(df):
     st.dataframe(clean_numeric_df.describe().T, use_container_width=True)
 
 
-def page_visualizations(df):
+def page_visualizations(df, df_err=None):
     st.title("📈 Food-Tech Data Visualizations")
     st.write("Explore dynamic data trends and relationships that influence restaurant ratings.")
 
     if df is None:
-        st.error("Dataset not available.")
+        st.error(df_err or "Dataset not available. Please ensure 'data/enhanced_zomato_dataset_clean.csv' is present in the project directory.")
+        if st.button("🔄 Clear Cache & Reload Data", key="reload_vis"):
+            st.cache_data.clear()
+            st.rerun()
         return
 
     df_clean = df.dropna(subset=['rate_clean'])
@@ -640,9 +685,9 @@ def main():
     if selected_page == "🏠 Home":
         page_home(df, meta)
     elif selected_page == "📊 Dataset Analysis":
-        page_dataset_analysis(df)
+        page_dataset_analysis(df, df_err)
     elif selected_page == "📈 Visualizations":
-        page_visualizations(df)
+        page_visualizations(df, df_err)
     elif selected_page == "🔮 Predict Rating":
         if model_err:
             st.error(model_err)

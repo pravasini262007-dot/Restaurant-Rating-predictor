@@ -26,9 +26,9 @@ restaurant-rating-predictor/
 ├── app.py                      # Main Streamlit Web Application
 ├── train_model.py              # Machine Learning Training & Evaluation Script
 ├── data/
-│   └── zomato.csv              # Zomato Restaurant Dataset
+│   └── enhanced_zomato_dataset_clean.csv  # Zomato Restaurant Dataset
 ├── models/
-│   ├── restaurant_rating_model.pkl   # Serialized Trained Model Pipeline (Joblib)
+│   ├── restaurant_rating_model.pkl   # Serialized Trained Model Pipeline (Joblib Compressed)
 │   └── metrics.json                  # Saved Evaluation Metrics & Categorical Metadata
 ├── requirements.txt            # Python Dependencies
 └── README.md                   # Project Documentation
@@ -59,10 +59,10 @@ pip install -r requirements.txt
 
 ### 2. Prepare the Dataset
 
-Ensure `zomato.csv` is placed inside the `data/` folder:
+Ensure `enhanced_zomato_dataset_clean.csv` is placed inside the `data/` folder:
 
 ```text
-data/zomato.csv
+data/enhanced_zomato_dataset_clean.csv
 ```
 
 ### 3. Train the Machine Learning Model
@@ -79,7 +79,7 @@ python train_model.py
 ============================================================
 FoodRate AI: Training Machine Learning Regression Model
 ============================================================
-[+] Loading dataset from 'data/zomato.csv'...
+[+] Loading dataset from 'data/enhanced_zomato_dataset_clean.csv'...
    Initial Dataset Shape: 51717 rows, 17 columns
    Shape after dropping duplicates: 51717 rows
 [+] Cleaning target column 'rate'...

@@ -29,23 +29,27 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 def find_dataset_path():
     """Locate the Zomato CSV dataset in standard project paths."""
     possible_paths = [
+        PROJECT_ROOT / 'data' / 'enhanced_zomato_dataset_clean.csv',
+        PROJECT_ROOT / 'enhanced_zomato_dataset_clean.csv',
         PROJECT_ROOT / 'data' / 'zomato.csv',
         PROJECT_ROOT / 'zomato.csv',
+        PROJECT_ROOT.parent / 'data' / 'enhanced_zomato_dataset_clean.csv',
         PROJECT_ROOT.parent / 'data' / 'zomato.csv'
     ]
     for path in possible_paths:
         if path.exists():
             return str(path)
-    raise FileNotFoundError("Could not find 'zomato.csv' in data/ or project root.")
+    raise FileNotFoundError("Could not find dataset ('enhanced_zomato_dataset_clean.csv' or 'zomato.csv') in data/ or project root.")
 
 
 def load_and_preprocess_data(file_path):
     """
-    Load Zomato dataset and clean features:
+    Load Zomato dataset and clean features across both enhanced and legacy schemas:
     - Drop duplicate rows
-    - Parse string ratings like '4.1/5', 'NEW', '-' into numeric float
-    - Convert 'approx_cost(for two people)' to numeric
-    - Drop rows missing target rating
+    - Handle rating target ('rate', 'Average_Rating', 'Dining_Rating')
+    - Handle cost feature ('approx_cost', 'approx_cost(for two people)', 'Avg_Price_Restaurant', 'Prices')
+    - Handle votes feature ('votes', 'Total_Votes', 'Votes')
+    - Handle location, rest_type, listed_in(type), online_order, book_table
     """
     print(f"[+] Loading dataset from '{file_path}'...")
     df = pd.read_csv(file_path)
@@ -58,32 +62,76 @@ def load_and_preprocess_data(file_path):
 
     # 2. Clean Target Column: 'rate'
     print("[+] Cleaning target column 'rate'...")
-    df['rate'] = df['rate'].astype(str)
-    df['rate'] = df['rate'].str.replace('NEW', '', regex=False)
-    df['rate'] = df['rate'].str.replace('-', '', regex=False)
-    df['rate'] = df['rate'].str.replace('/5', '', regex=False)
-    df['rate'] = df['rate'].str.strip()
-    df['rate'] = pd.to_numeric(df['rate'], errors='coerce')
-    
+    if 'rate' in df.columns:
+        df['rate'] = df['rate'].astype(str)
+        df['rate'] = df['rate'].str.replace('NEW', '', regex=False)
+        df['rate'] = df['rate'].str.replace('-', '', regex=False)
+        df['rate'] = df['rate'].str.replace('/5', '', regex=False)
+        df['rate'] = df['rate'].str.strip()
+        df['rate'] = pd.to_numeric(df['rate'], errors='coerce')
+    elif 'Average_Rating' in df.columns:
+        df['rate'] = pd.to_numeric(df['Average_Rating'], errors='coerce')
+    elif 'Dining_Rating' in df.columns:
+        df['rate'] = pd.to_numeric(df['Dining_Rating'], errors='coerce')
+
     # Drop rows where target rating is NaN
     df = df.dropna(subset=['rate'])
     print(f"   Valid rating rows remaining: {df.shape[0]} rows")
 
-    # 3. Clean Feature: 'approx_cost(for two people)'
+    # 3. Clean Feature: 'approx_cost'
     print("[+] Cleaning numeric feature 'approx_cost'...")
-    cost_col = 'approx_cost(for two people)' if 'approx_cost(for two people)' in df.columns else 'approx_cost'
-    df['approx_cost'] = df[cost_col].astype(str).str.replace(',', '', regex=False).str.strip()
-    df['approx_cost'] = pd.to_numeric(df['approx_cost'], errors='coerce')
+    if 'approx_cost(for two people)' in df.columns:
+        cost_col = 'approx_cost(for two people)'
+        df['approx_cost'] = df[cost_col].astype(str).str.replace(',', '', regex=False).str.strip()
+        df['approx_cost'] = pd.to_numeric(df['approx_cost'], errors='coerce')
+    elif 'approx_cost' in df.columns:
+        df['approx_cost'] = pd.to_numeric(df['approx_cost'].astype(str).str.replace(',', '', regex=False).str.strip(), errors='coerce')
+    elif 'Avg_Price_Restaurant' in df.columns:
+        df['approx_cost'] = pd.to_numeric(df['Avg_Price_Restaurant'], errors='coerce')
+    elif 'Prices' in df.columns:
+        df['approx_cost'] = pd.to_numeric(df['Prices'], errors='coerce')
 
     # 4. Clean votes feature
-    df['votes'] = pd.to_numeric(df['votes'], errors='coerce').fillna(0)
+    if 'votes' in df.columns:
+        df['votes'] = pd.to_numeric(df['votes'], errors='coerce').fillna(0)
+    elif 'Total_Votes' in df.columns:
+        df['votes'] = pd.to_numeric(df['Total_Votes'], errors='coerce').fillna(0)
+    elif 'Votes' in df.columns:
+        df['votes'] = pd.to_numeric(df['Votes'], errors='coerce').fillna(0)
 
-    # 5. Handle missing values in essential categorical columns
+    # 5. Handle missing values & categorical mappings
+    if 'location' not in df.columns:
+        if 'Place_Name' in df.columns:
+            df['location'] = df['Place_Name']
+        elif 'City' in df.columns:
+            df['location'] = df['City']
+
+    if 'rest_type' not in df.columns:
+        if 'Cuisine' in df.columns:
+            df['rest_type'] = df['Cuisine']
+
+    if 'listed_in(type)' not in df.columns:
+        if 'City' in df.columns:
+            df['listed_in(type)'] = df['City']
+        elif 'Cuisine' in df.columns:
+            df['listed_in(type)'] = df['Cuisine']
+
+    if 'online_order' not in df.columns:
+        if 'Is_Bestseller' in df.columns:
+            df['online_order'] = df['Is_Bestseller'].map({1: 'Yes', 0: 'No'})
+        elif 'Best_Seller' in df.columns:
+            df['online_order'] = df['Best_Seller'].apply(lambda x: 'Yes' if str(x).upper() in ['YES', 'BESTSELLER', 'MUST TRY'] else 'No')
+        else:
+            df['online_order'] = 'No'
+
+    if 'book_table' not in df.columns:
+        if 'Is_Highly_Rated' in df.columns:
+            df['book_table'] = df['Is_Highly_Rated'].map({1: 'Yes', 0: 'No'})
+        else:
+            df['book_table'] = 'No'
+
     for col in ['online_order', 'book_table', 'location', 'rest_type', 'listed_in(type)']:
-        if col in df.columns:
-            df[col] = df[col].astype(str).fillna('Unknown')
-            # Clean string values
-            df[col] = df[col].str.strip()
+        df[col] = df[col].astype(str).fillna('Unknown').str.strip()
 
     return df
 
@@ -187,8 +235,8 @@ def main():
     # 8. Save Trained Model Pipeline & Metadata
     os.makedirs('models', exist_ok=True)
     model_path = os.path.join('models', 'restaurant_rating_model.pkl')
-    print(f"\n[+] Saving final trained model to '{model_path}'...")
-    joblib.dump(best_model, model_path)
+    print(f"\n[+] Saving final trained model (compressed for GitHub limit compliance) to '{model_path}'...")
+    joblib.dump(best_model, model_path, compress=3)
 
     # Save metrics & categorical values metadata for Streamlit App UI
     unique_locations = sorted([loc for loc in df['location'].dropna().unique() if loc != 'nan' and loc != 'Unknown'])
