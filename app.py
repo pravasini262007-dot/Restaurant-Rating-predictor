@@ -204,12 +204,17 @@ def load_clean_dataset():
 
 @st.cache_resource
 def load_model_and_metadata():
-    """Load joblib model pipeline and metadata JSON."""
+    """Load joblib model pipeline and metadata JSON. Auto-train if missing."""
     model_path = resolve_project_path('models', 'restaurant_rating_model.pkl')
     meta_path = resolve_project_path('models', 'metrics.json')
 
     if not os.path.exists(model_path):
-        return None, None, f"Model file '{model_path}' not found. Please run 'python train_model.py' first."
+        try:
+            import train_model
+            with st.spinner("⚡ Initializing & training machine learning model pipeline..."):
+                train_model.main()
+        except Exception as train_err:
+            return None, None, f"Model file '{model_path}' not found and auto-training failed: {str(train_err)}"
 
     try:
         model = joblib.load(model_path)
