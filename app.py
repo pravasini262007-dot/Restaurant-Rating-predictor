@@ -9,12 +9,19 @@ and predicting restaurant ratings using trained regression models.
 import os
 import json
 from pathlib import Path
-import joblib
-import pandas as pd
-import numpy as np
-import streamlit as st
-import plotly.express as px
-import plotly.graph_objects as io
+try:
+    import joblib
+    import pandas as pd
+    import numpy as np
+    import streamlit as st
+    import plotly.express as px
+    import plotly.graph_objects as go
+except ImportError as e:
+    missing_module = getattr(e, 'name', 'required package')
+    raise ImportError(
+        f"Missing dependency: '{missing_module}'. "
+        "Please install all requirements by running: pip install -r requirements.txt"
+    ) from e
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
@@ -141,59 +148,89 @@ def load_clean_dataset():
     df_path = next((p for p in data_paths if os.path.exists(p)), None)
 
     if df_path is None:
+        search_dirs = [PROJECT_ROOT / 'data', PROJECT_ROOT, PROJECT_ROOT.parent / 'data']
+        for sdir in search_dirs:
+            if sdir.exists():
+                csv_files = list(sdir.glob('*.csv'))
+                if csv_files:
+                    df_path = str(csv_files[0])
+                    break
+
+    if df_path is None:
         return None, "Dataset file 'enhanced_zomato_dataset_clean.csv' or 'zomato.csv' not found. Please place it in the project root or data/ folder."
 
     try:
         df = pd.read_csv(df_path)
+        df.columns = [str(c).strip().replace('\ufeff', '') for c in df.columns]
         df = df.drop_duplicates()
+        col_map = {c.lower(): c for c in df.columns}
         
         # Clean rate
-        if 'rate' in df.columns:
-            df['rate_clean'] = df['rate'].astype(str).str.replace('NEW', '', regex=False)
+        target_col = None
+        for candidate in ['rate', 'average_rating', 'dining_rating', 'rating', 'avg_rating_restaurant', 'delivery_rating', 'aggregate rating']:
+            if candidate in col_map:
+                target_col = col_map[candidate]
+                break
+
+        if target_col is None:
+            for c in df.columns:
+                if 'rate' in c.lower() or 'rating' in c.lower():
+                    target_col = c
+                    break
+
+        if target_col is not None:
+            df['rate_clean'] = df[target_col].astype(str).str.replace('NEW', '', regex=False)
             df['rate_clean'] = df['rate_clean'].str.replace('-', '', regex=False)
             df['rate_clean'] = df['rate_clean'].str.replace('/5', '', regex=False).str.strip()
             df['rate_clean'] = pd.to_numeric(df['rate_clean'], errors='coerce')
-        elif 'Average_Rating' in df.columns:
-            df['rate_clean'] = pd.to_numeric(df['Average_Rating'], errors='coerce')
-        elif 'Dining_Rating' in df.columns:
-            df['rate_clean'] = pd.to_numeric(df['Dining_Rating'], errors='coerce')
+        else:
+            df['rate_clean'] = np.nan
         
         # Clean approx cost
-        if 'approx_cost(for two people)' in df.columns:
-            cost_col = 'approx_cost(for two people)'
+        cost_col = None
+        for candidate in ['approx_cost(for two people)', 'approx_cost', 'avg_price_restaurant', 'prices', 'price', 'cost']:
+            if candidate in col_map:
+                cost_col = col_map[candidate]
+                break
+
+        if cost_col is not None:
             df['approx_cost_clean'] = df[cost_col].astype(str).str.replace(',', '', regex=False).str.strip()
             df['approx_cost_clean'] = pd.to_numeric(df['approx_cost_clean'], errors='coerce')
-        elif 'approx_cost' in df.columns:
-            df['approx_cost_clean'] = pd.to_numeric(df['approx_cost'].astype(str).str.replace(',', '', regex=False).str.strip(), errors='coerce')
-        elif 'Avg_Price_Restaurant' in df.columns:
-            df['approx_cost_clean'] = pd.to_numeric(df['Avg_Price_Restaurant'], errors='coerce')
-        elif 'Prices' in df.columns:
-            df['approx_cost_clean'] = pd.to_numeric(df['Prices'], errors='coerce')
+        else:
+            df['approx_cost_clean'] = 500.0
 
         # Clean votes
-        if 'votes' in df.columns:
-            df['votes_clean'] = pd.to_numeric(df['votes'], errors='coerce').fillna(0)
-        elif 'Total_Votes' in df.columns:
-            df['votes_clean'] = pd.to_numeric(df['Total_Votes'], errors='coerce').fillna(0)
-        elif 'Votes' in df.columns:
-            df['votes_clean'] = pd.to_numeric(df['Votes'], errors='coerce').fillna(0)
+        votes_col = None
+        for candidate in ['votes', 'total_votes', 'dining_votes', 'delivery_votes']:
+            if candidate in col_map:
+                votes_col = col_map[candidate]
+                break
+
+        if votes_col is not None:
+            df['votes_clean'] = pd.to_numeric(df[votes_col], errors='coerce').fillna(0)
+        else:
+            df['votes_clean'] = 0.0
 
         # Standardize location, rest_type, online_order if missing
         if 'location' not in df.columns:
-            if 'Place_Name' in df.columns:
-                df['location'] = df['Place_Name']
-            elif 'City' in df.columns:
-                df['location'] = df['City']
+            if 'place_name' in col_map:
+                df['location'] = df[col_map['place_name']]
+            elif 'city' in col_map:
+                df['location'] = df[col_map['city']]
+            elif 'locality' in col_map:
+                df['location'] = df[col_map['locality']]
 
         if 'rest_type' not in df.columns:
-            if 'Cuisine' in df.columns:
-                df['rest_type'] = df['Cuisine']
+            if 'cuisine' in col_map:
+                df['rest_type'] = df[col_map['cuisine']]
+            elif 'cuisines' in col_map:
+                df['rest_type'] = df[col_map['cuisines']]
 
         if 'online_order' not in df.columns:
-            if 'Is_Bestseller' in df.columns:
-                df['online_order'] = df['Is_Bestseller'].map({1: 'Yes', 0: 'No'})
-            elif 'Best_Seller' in df.columns:
-                df['online_order'] = df['Best_Seller'].apply(lambda x: 'Yes' if str(x).upper() in ['YES', 'BESTSELLER', 'MUST TRY'] else 'No')
+            if 'is_bestseller' in col_map:
+                df['online_order'] = df[col_map['is_bestseller']].map({1: 'Yes', 0: 'No', '1': 'Yes', '0': 'No'})
+            elif 'best_seller' in col_map:
+                df['online_order'] = df[col_map['best_seller']].apply(lambda x: 'Yes' if str(x).upper() in ['YES', 'BESTSELLER', 'MUST TRY'] else 'No')
             else:
                 df['online_order'] = 'No'
 
@@ -280,7 +317,7 @@ def page_home(df, meta):
         """, unsafe_allow_html=True)
 
     with col2:
-        valid_ratings = f"{df['rate_clean'].count():,}" if df is not None else "41,665"
+        valid_ratings = f"{df['rate_clean'].count():,}" if df is not None and 'rate_clean' in df.columns else "41,665"
         st.markdown(f"""
         <div class="metric-card">
             <div class="metric-label">Clean Ratings</div>
@@ -375,9 +412,13 @@ def page_dataset_analysis(df, df_err=None):
 
     st.markdown("---")
     st.subheader("📈 Numerical Statistical Summary")
-    clean_numeric_df = df[['rate_clean', 'votes_clean', 'approx_cost_clean']].dropna()
-    clean_numeric_df.columns = ['Rating (/5)', 'Votes Count', 'Approx Cost for Two (₹)']
-    st.dataframe(clean_numeric_df.describe().T, use_container_width=True)
+    clean_cols = [c for c in ['rate_clean', 'votes_clean', 'approx_cost_clean'] if c in df.columns]
+    if clean_cols:
+        clean_numeric_df = df[clean_cols].dropna()
+        rename_map = {'rate_clean': 'Rating (/5)', 'votes_clean': 'Votes Count', 'approx_cost_clean': 'Approx Cost for Two (₹)'}
+        clean_numeric_df = clean_numeric_df.rename(columns=rename_map)
+        if not clean_numeric_df.empty:
+            st.dataframe(clean_numeric_df.describe().T, use_container_width=True)
 
 
 def page_visualizations(df, df_err=None):
@@ -391,55 +432,69 @@ def page_visualizations(df, df_err=None):
             st.rerun()
         return
 
-    df_clean = df.dropna(subset=['rate_clean'])
+    if 'rate_clean' in df.columns:
+        df_clean = df.dropna(subset=['rate_clean'])
+    else:
+        df_clean = df
+
+    if df_clean.empty:
+        st.warning("No valid rating data available for visualizations.")
+        return
 
     # Visualization 1: Distribution of Ratings
-    st.subheader("1. Distribution of Restaurant Ratings")
-    fig_hist = px.histogram(
-        df_clean, 
-        x='rate_clean',
-        nbins=30,
-        title="Distribution of Cleaned Restaurant Ratings (Scale 1.8 - 4.9)",
-        color_discrete_sequence=['#f97316'],
-        labels={'rate_clean': 'Restaurant Rating'}
-    )
-    fig_hist.update_layout(template="plotly_dark", height=400)
-    st.plotly_chart(fig_hist, use_container_width=True)
-    st.caption("💡 **Insight**: Most restaurant ratings follow a normal distribution centered around **3.7 / 5**. Ratings above 4.5 are relatively rare and represent top-tier establishments.")
-
-    st.markdown("---")
+    if 'rate_clean' in df_clean.columns:
+        st.subheader("1. Distribution of Restaurant Ratings")
+        fig_hist = px.histogram(
+            df_clean, 
+            x='rate_clean',
+            nbins=30,
+            title="Distribution of Cleaned Restaurant Ratings (Scale 1.8 - 4.9)",
+            color_discrete_sequence=['#f97316'],
+            labels={'rate_clean': 'Restaurant Rating'}
+        )
+        fig_hist.update_layout(template="plotly_dark", height=400)
+        st.plotly_chart(fig_hist, use_container_width=True)
+        st.caption("💡 **Insight**: Most restaurant ratings follow a normal distribution centered around **3.7 / 5**. Ratings above 4.5 are relatively rare and represent top-tier establishments.")
+        st.markdown("---")
 
     # Visualization 2 & 3: Cost & Votes vs Rating
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader("2. Cost for Two vs Rating")
-        fig_cost = px.box(
-            df_clean.dropna(subset=['approx_cost_clean']),
-            x='rate_clean',
-            y='approx_cost_clean',
-            title="Approx Cost for Two (₹) by Rating Score",
-            color_discrete_sequence=['#38bdf8'],
-            labels={'rate_clean': 'Rating', 'approx_cost_clean': 'Cost for Two (₹)'}
-        )
-        fig_cost.update_layout(template="plotly_dark", height=450)
-        st.plotly_chart(fig_cost, use_container_width=True)
-        st.caption("💡 **Insight**: Higher-rated restaurants (4.0+) generally have a higher average cost for two people.")
+        if 'rate_clean' in df_clean.columns and 'approx_cost_clean' in df_clean.columns:
+            st.subheader("2. Cost for Two vs Rating")
+            cost_df = df_clean.dropna(subset=['approx_cost_clean'])
+            if not cost_df.empty:
+                fig_cost = px.box(
+                    cost_df,
+                    x='rate_clean',
+                    y='approx_cost_clean',
+                    title="Approx Cost for Two (₹) by Rating Score",
+                    color_discrete_sequence=['#38bdf8'],
+                    labels={'rate_clean': 'Rating', 'approx_cost_clean': 'Cost for Two (₹)'}
+                )
+                fig_cost.update_layout(template="plotly_dark", height=450)
+                st.plotly_chart(fig_cost, use_container_width=True)
+                st.caption("💡 **Insight**: Higher-rated restaurants (4.0+) generally have a higher average cost for two people.")
 
     with col2:
-        st.subheader("3. Votes Volume vs Rating")
-        fig_votes = px.scatter(
-            df_clean.sample(min(3000, len(df_clean)), random_state=42),
-            x='votes_clean',
-            y='rate_clean',
-            color='online_order',
-            title="Restaurant Votes vs Rating Score",
-            labels={'votes_clean': 'Number of Votes', 'rate_clean': 'Rating', 'online_order': 'Online Order'},
-            color_discrete_map={'Yes': '#10b981', 'No': '#ef4444'}
-        )
-        fig_votes.update_layout(template="plotly_dark", height=450)
-        st.plotly_chart(fig_votes, use_container_width=True)
-        st.caption("💡 **Insight**: Restaurants with higher vote counts consistently maintain ratings above 3.5.")
+        if 'rate_clean' in df_clean.columns and 'votes_clean' in df_clean.columns:
+            st.subheader("3. Votes Volume vs Rating")
+            sample_size = min(3000, len(df_clean))
+            sample_df = df_clean.sample(sample_size, random_state=42) if sample_size > 0 else df_clean
+            color_arg = 'online_order' if 'online_order' in sample_df.columns else None
+            fig_votes = px.scatter(
+                sample_df,
+                x='votes_clean',
+                y='rate_clean',
+                color=color_arg,
+                title="Restaurant Votes vs Rating Score",
+                labels={'votes_clean': 'Number of Votes', 'rate_clean': 'Rating', 'online_order': 'Online Order'},
+                color_discrete_map={'Yes': '#10b981', 'No': '#ef4444'} if color_arg else None
+            )
+            fig_votes.update_layout(template="plotly_dark", height=450)
+            st.plotly_chart(fig_votes, use_container_width=True)
+            st.caption("💡 **Insight**: Restaurants with higher vote counts consistently maintain ratings above 3.5.")
 
     st.markdown("---")
 
@@ -447,54 +502,58 @@ def page_visualizations(df, df_err=None):
     col3, col4 = st.columns(2)
 
     with col3:
-        st.subheader("4. Average Rating by Restaurant Type (Top 10)")
-        top_types = df_clean.groupby('rest_type')['rate_clean'].agg(['mean', 'count']).reset_index()
-        top_types = top_types[top_types['count'] > 50].sort_values(by='mean', ascending=False).head(10)
-        
-        fig_rest = px.bar(
-            top_types,
-            x='mean',
-            y='rest_type',
-            orientation='h',
-            title="Top Restaurant Types by Average Rating",
-            color='mean',
-            color_continuous_scale='Oranges',
-            labels={'mean': 'Average Rating', 'rest_type': 'Restaurant Type'}
-        )
-        fig_rest.update_layout(template="plotly_dark", height=450, yaxis={'categoryorder':'total ascending'})
-        st.plotly_chart(fig_rest, use_container_width=True)
+        if 'rest_type' in df_clean.columns and 'rate_clean' in df_clean.columns:
+            st.subheader("4. Average Rating by Restaurant Type (Top 10)")
+            top_types = df_clean.groupby('rest_type')['rate_clean'].agg(['mean', 'count']).reset_index()
+            top_types = top_types[top_types['count'] > 10].sort_values(by='mean', ascending=False).head(10)
+            if not top_types.empty:
+                fig_rest = px.bar(
+                    top_types,
+                    x='mean',
+                    y='rest_type',
+                    orientation='h',
+                    title="Top Restaurant Types by Average Rating",
+                    color='mean',
+                    color_continuous_scale='Oranges',
+                    labels={'mean': 'Average Rating', 'rest_type': 'Restaurant Type'}
+                )
+                fig_rest.update_layout(template="plotly_dark", height=450, yaxis={'categoryorder':'total ascending'})
+                st.plotly_chart(fig_rest, use_container_width=True)
 
     with col4:
-        st.subheader("5. Top Locations by Average Rating")
-        top_locs = df_clean.groupby('location')['rate_clean'].agg(['mean', 'count']).reset_index()
-        top_locs = top_locs[top_locs['count'] > 100].sort_values(by='mean', ascending=False).head(10)
-        
-        fig_loc = px.bar(
-            top_locs,
-            x='mean',
-            y='location',
-            orientation='h',
-            title="Top Locations by Average Rating Score",
-            color='mean',
-            color_continuous_scale='Viridis',
-            labels={'mean': 'Average Rating', 'location': 'Location'}
-        )
-        fig_loc.update_layout(template="plotly_dark", height=450, yaxis={'categoryorder':'total ascending'})
-        st.plotly_chart(fig_loc, use_container_width=True)
+        if 'location' in df_clean.columns and 'rate_clean' in df_clean.columns:
+            st.subheader("5. Top Locations by Average Rating")
+            top_locs = df_clean.groupby('location')['rate_clean'].agg(['mean', 'count']).reset_index()
+            top_locs = top_locs[top_locs['count'] > 10].sort_values(by='mean', ascending=False).head(10)
+            if not top_locs.empty:
+                fig_loc = px.bar(
+                    top_locs,
+                    x='mean',
+                    y='location',
+                    orientation='h',
+                    title="Top Locations by Average Rating Score",
+                    color='mean',
+                    color_continuous_scale='Viridis',
+                    labels={'mean': 'Average Rating', 'location': 'Location'}
+                )
+                fig_loc.update_layout(template="plotly_dark", height=450, yaxis={'categoryorder':'total ascending'})
+                st.plotly_chart(fig_loc, use_container_width=True)
 
     st.markdown("---")
 
     # Visualization 6: Heatmap Correlation
-    st.subheader("6. Numerical Features Correlation Matrix")
-    corr_df = df_clean[['rate_clean', 'votes_clean', 'approx_cost_clean']].corr()
-    fig_corr = px.imshow(
-        corr_df,
-        text_auto=".3f",
-        color_continuous_scale="RdBu_r",
-        title="Pearson Correlation Heatmap"
-    )
-    fig_corr.update_layout(template="plotly_dark", height=400)
-    st.plotly_chart(fig_corr, use_container_width=True)
+    num_cols = [c for c in ['rate_clean', 'votes_clean', 'approx_cost_clean'] if c in df_clean.columns]
+    if len(num_cols) >= 2:
+        st.subheader("6. Numerical Features Correlation Matrix")
+        corr_df = df_clean[num_cols].corr()
+        fig_corr = px.imshow(
+            corr_df,
+            text_auto=".3f",
+            color_continuous_scale="RdBu_r",
+            title="Pearson Correlation Heatmap"
+        )
+        fig_corr.update_layout(template="plotly_dark", height=400)
+        st.plotly_chart(fig_corr, use_container_width=True)
 
 
 def page_predict_rating(model, meta):
@@ -506,9 +565,9 @@ def page_predict_rating(model, meta):
         return
 
     # Extract default choices from metadata if available
-    locations = meta.get('locations', ['BTM', 'Koramangala 5th Block', 'HSR', 'Indiranagar', 'JP Nagar']) if meta else ['BTM']
-    rest_types = meta.get('rest_types', ['Casual Dining', 'Quick Bites', 'Cafe', 'Delivery', 'Dessert Parlor']) if meta else ['Casual Dining']
-    listed_types = meta.get('listed_types', ['Buffet', 'Cafes', 'Delivery', 'Dine-out', 'Pubs and bars']) if meta else ['Delivery']
+    locations = meta.get('locations') if meta and meta.get('locations') else ['BTM', 'Koramangala 5th Block', 'HSR', 'Indiranagar', 'JP Nagar']
+    rest_types = meta.get('rest_types') if meta and meta.get('rest_types') else ['Casual Dining', 'Quick Bites', 'Cafe', 'Delivery', 'Dessert Parlor']
+    listed_types = meta.get('listed_types') if meta and meta.get('listed_types') else ['Buffet', 'Cafes', 'Delivery', 'Dine-out', 'Pubs and bars']
 
     with st.form("prediction_form"):
         col1, col2 = st.columns(2)
@@ -582,16 +641,17 @@ def page_predict_rating(model, meta):
 
         try:
             prediction = model.predict(input_data)[0]
-        except (AttributeError, ValueError) as version_err:
+        except Exception as version_err:
             st.info("🔄 Optimizing model pipeline compatibility for host environment...")
-            import train_model
-            train_model.main()
-            st.cache_resource.clear()
-            model, meta, _ = load_model_and_metadata()
-            prediction = model.predict(input_data)[0]
-        except Exception as e:
-            st.error(f"Error making rating prediction: {str(e)}")
-            return
+            try:
+                import train_model
+                train_model.main()
+                st.cache_resource.clear()
+                model, meta, _ = load_model_and_metadata()
+                prediction = model.predict(input_data)[0]
+            except Exception as retrain_err:
+                st.error(f"Error making rating prediction: {str(retrain_err)}")
+                return
 
         try:
             # Clip predicted rating to valid rating boundaries [1.0, 5.0]
@@ -680,7 +740,7 @@ def page_model_performance(meta):
         )
         # Add ideal diagonal 45-degree reference line
         fig_scatter.add_trace(
-            io.Scatter(
+            go.Scatter(
                 x=[1.5, 5.0],
                 y=[1.5, 5.0],
                 mode='lines',

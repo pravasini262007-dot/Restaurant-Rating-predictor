@@ -39,6 +39,14 @@ def find_dataset_path():
     for path in possible_paths:
         if path.exists():
             return str(path)
+            
+    # Fallback search for any .csv file in data/ or PROJECT_ROOT
+    for search_dir in [PROJECT_ROOT / 'data', PROJECT_ROOT, PROJECT_ROOT.parent / 'data']:
+        if search_dir.exists():
+            csv_files = list(search_dir.glob('*.csv'))
+            if csv_files:
+                return str(csv_files[0])
+
     raise FileNotFoundError("Could not find dataset ('enhanced_zomato_dataset_clean.csv' or 'zomato.csv') in data/ or project root.")
 
 
@@ -46,13 +54,17 @@ def load_and_preprocess_data(file_path):
     """
     Load Zomato dataset and clean features across both enhanced and legacy schemas:
     - Drop duplicate rows
-    - Handle rating target ('rate', 'Average_Rating', 'Dining_Rating')
+    - Handle rating target ('rate', 'Average_Rating', 'Dining_Rating', etc.)
     - Handle cost feature ('approx_cost', 'approx_cost(for two people)', 'Avg_Price_Restaurant', 'Prices')
     - Handle votes feature ('votes', 'Total_Votes', 'Votes')
     - Handle location, rest_type, listed_in(type), online_order, book_table
     """
     print(f"[+] Loading dataset from '{file_path}'...")
     df = pd.read_csv(file_path)
+    
+    # Strip column names and remove Byte Order Marks (BOM \ufeff)
+    df.columns = [str(c).strip().replace('\ufeff', '') for c in df.columns]
+    
     initial_shape = df.shape
     print(f"   Initial Dataset Shape: {initial_shape[0]} rows, {initial_shape[1]} columns")
 
@@ -60,19 +72,32 @@ def load_and_preprocess_data(file_path):
     df = df.drop_duplicates()
     print(f"   Shape after dropping duplicates: {df.shape[0]} rows")
 
+    # Create lower-case column mapping for robust case-insensitive lookup
+    col_map = {c.lower(): c for c in df.columns}
+
     # 2. Clean Target Column: 'rate'
     print("[+] Cleaning target column 'rate'...")
-    if 'rate' in df.columns:
-        df['rate'] = df['rate'].astype(str)
+    target_col = None
+    for candidate in ['rate', 'average_rating', 'dining_rating', 'rating', 'avg_rating_restaurant', 'delivery_rating', 'aggregate rating']:
+        if candidate in col_map:
+            target_col = col_map[candidate]
+            break
+
+    if target_col is None:
+        for c in df.columns:
+            if 'rate' in c.lower() or 'rating' in c.lower():
+                target_col = c
+                break
+
+    if target_col is not None:
+        df['rate'] = df[target_col].astype(str)
         df['rate'] = df['rate'].str.replace('NEW', '', regex=False)
         df['rate'] = df['rate'].str.replace('-', '', regex=False)
         df['rate'] = df['rate'].str.replace('/5', '', regex=False)
         df['rate'] = df['rate'].str.strip()
         df['rate'] = pd.to_numeric(df['rate'], errors='coerce')
-    elif 'Average_Rating' in df.columns:
-        df['rate'] = pd.to_numeric(df['Average_Rating'], errors='coerce')
-    elif 'Dining_Rating' in df.columns:
-        df['rate'] = pd.to_numeric(df['Dining_Rating'], errors='coerce')
+    else:
+        raise KeyError(f"Could not locate a rating target column in dataset. Available columns: {list(df.columns)}")
 
     # Drop rows where target rating is NaN
     df = df.dropna(subset=['rate'])
@@ -80,57 +105,75 @@ def load_and_preprocess_data(file_path):
 
     # 3. Clean Feature: 'approx_cost'
     print("[+] Cleaning numeric feature 'approx_cost'...")
-    if 'approx_cost(for two people)' in df.columns:
-        cost_col = 'approx_cost(for two people)'
+    cost_col = None
+    for candidate in ['approx_cost(for two people)', 'approx_cost', 'avg_price_restaurant', 'prices', 'price', 'cost']:
+        if candidate in col_map:
+            cost_col = col_map[candidate]
+            break
+
+    if cost_col is not None:
         df['approx_cost'] = df[cost_col].astype(str).str.replace(',', '', regex=False).str.strip()
         df['approx_cost'] = pd.to_numeric(df['approx_cost'], errors='coerce')
-    elif 'approx_cost' in df.columns:
-        df['approx_cost'] = pd.to_numeric(df['approx_cost'].astype(str).str.replace(',', '', regex=False).str.strip(), errors='coerce')
-    elif 'Avg_Price_Restaurant' in df.columns:
-        df['approx_cost'] = pd.to_numeric(df['Avg_Price_Restaurant'], errors='coerce')
-    elif 'Prices' in df.columns:
-        df['approx_cost'] = pd.to_numeric(df['Prices'], errors='coerce')
-    
-    # Impute missing cost with median
+    else:
+        df['approx_cost'] = 500.0
+
     cost_median = df['approx_cost'].median() if not df['approx_cost'].isnull().all() else 500.0
+    if pd.isna(cost_median):
+        cost_median = 500.0
     df['approx_cost'] = df['approx_cost'].fillna(cost_median)
 
     # 4. Clean votes feature
-    if 'votes' in df.columns:
-        df['votes'] = pd.to_numeric(df['votes'], errors='coerce').fillna(0)
-    elif 'Total_Votes' in df.columns:
-        df['votes'] = pd.to_numeric(df['Total_Votes'], errors='coerce').fillna(0)
-    elif 'Votes' in df.columns:
-        df['votes'] = pd.to_numeric(df['Votes'], errors='coerce').fillna(0)
+    votes_col = None
+    for candidate in ['votes', 'total_votes', 'dining_votes', 'delivery_votes']:
+        if candidate in col_map:
+            votes_col = col_map[candidate]
+            break
+
+    if votes_col is not None:
+        df['votes'] = pd.to_numeric(df[votes_col], errors='coerce').fillna(0)
+    else:
+        df['votes'] = 0.0
 
     # 5. Handle missing values & categorical mappings
     if 'location' not in df.columns:
-        if 'Place_Name' in df.columns:
-            df['location'] = df['Place_Name']
-        elif 'City' in df.columns:
-            df['location'] = df['City']
+        if 'place_name' in col_map:
+            df['location'] = df[col_map['place_name']]
+        elif 'city' in col_map:
+            df['location'] = df[col_map['city']]
+        elif 'locality' in col_map:
+            df['location'] = df[col_map['locality']]
+        else:
+            df['location'] = 'Unknown'
 
     if 'rest_type' not in df.columns:
-        if 'Cuisine' in df.columns:
-            df['rest_type'] = df['Cuisine']
+        if 'cuisine' in col_map:
+            df['rest_type'] = df[col_map['cuisine']]
+        elif 'cuisines' in col_map:
+            df['rest_type'] = df[col_map['cuisines']]
+        else:
+            df['rest_type'] = 'Unknown'
 
     if 'listed_in(type)' not in df.columns:
-        if 'City' in df.columns:
-            df['listed_in(type)'] = df['City']
-        elif 'Cuisine' in df.columns:
-            df['listed_in(type)'] = df['Cuisine']
+        if 'listed_in_type' in col_map:
+            df['listed_in(type)'] = df[col_map['listed_in_type']]
+        elif 'city' in col_map:
+            df['listed_in(type)'] = df[col_map['city']]
+        elif 'cuisine' in col_map:
+            df['listed_in(type)'] = df[col_map['cuisine']]
+        else:
+            df['listed_in(type)'] = 'Unknown'
 
     if 'online_order' not in df.columns:
-        if 'Is_Bestseller' in df.columns:
-            df['online_order'] = df['Is_Bestseller'].map({1: 'Yes', 0: 'No'})
-        elif 'Best_Seller' in df.columns:
-            df['online_order'] = df['Best_Seller'].apply(lambda x: 'Yes' if str(x).upper() in ['YES', 'BESTSELLER', 'MUST TRY'] else 'No')
+        if 'is_bestseller' in col_map:
+            df['online_order'] = df[col_map['is_bestseller']].map({1: 'Yes', 0: 'No', '1': 'Yes', '0': 'No'})
+        elif 'best_seller' in col_map:
+            df['online_order'] = df[col_map['best_seller']].apply(lambda x: 'Yes' if str(x).upper() in ['YES', 'BESTSELLER', 'MUST TRY'] else 'No')
         else:
             df['online_order'] = 'No'
 
     if 'book_table' not in df.columns:
-        if 'Is_Highly_Rated' in df.columns:
-            df['book_table'] = df['Is_Highly_Rated'].map({1: 'Yes', 0: 'No'})
+        if 'is_highly_rated' in col_map:
+            df['book_table'] = df[col_map['is_highly_rated']].map({1: 'Yes', 0: 'No', '1': 'Yes', '0': 'No'})
         else:
             df['book_table'] = 'No'
 
