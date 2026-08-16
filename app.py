@@ -153,9 +153,8 @@ CUSTOM_CSS = """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 
-@st.cache_data
-def load_clean_dataset():
-    """Load and preprocess dataset into restaurant entity records for analysis and visualization."""
+def find_clean_dataset_path():
+    """Find the best available restaurant dataset path."""
     data_paths = [
         resolve_project_path('data', 'enhanced_zomato_dataset_clean.csv'),
         resolve_project_path('enhanced_zomato_dataset_clean.csv'),
@@ -176,7 +175,16 @@ def load_clean_dataset():
                     break
 
     if df_path is None:
-        return None, "Dataset file 'enhanced_zomato_dataset_clean.csv' or 'zomato.csv' not found. Please place it in data/ folder."
+        return None
+
+    return df_path
+
+
+@st.cache_data
+def _load_clean_dataset_from_path(df_path, file_mtime_ns, file_size):
+    """Load and preprocess dataset into restaurant entity records for analysis and visualization."""
+    # file_mtime_ns and file_size are cache keys so Streamlit reloads changed CSVs.
+    del file_mtime_ns, file_size
 
     try:
         raw_df = pd.read_csv(df_path)
@@ -210,9 +218,11 @@ def load_clean_dataset():
             df['rest_type'] = grouped[col_map['cuisine']].apply(most_common_cuisine) if 'cuisine' in col_map else 'Other'
 
             if 'average_rating' in col_map:
-                df['rate_clean'] = grouped[col_map['average_rating']].apply(first_valid)
+                rating_source = pd.to_numeric(raw_df[col_map['average_rating']], errors='coerce')
+                df['rate_clean'] = rating_source.groupby([raw_df[rest_name_col], raw_df[place_col], raw_df[city_col]], dropna=False).apply(first_valid)
             elif 'dining_rating' in col_map:
-                df['rate_clean'] = grouped[col_map['dining_rating']].apply(first_valid)
+                rating_source = pd.to_numeric(raw_df[col_map['dining_rating']], errors='coerce')
+                df['rate_clean'] = rating_source.groupby([raw_df[rest_name_col], raw_df[place_col], raw_df[city_col]], dropna=False).apply(first_valid)
             else:
                 df['rate_clean'] = np.nan
 
@@ -294,6 +304,16 @@ def load_clean_dataset():
         return df, None
     except Exception as e:
         return None, f"Error loading dataset: {str(e)}"
+
+
+def load_clean_dataset():
+    """Load the clean dataset, invalidating Streamlit cache when the CSV changes."""
+    df_path = find_clean_dataset_path()
+    if df_path is None:
+        return None, "Dataset file 'enhanced_zomato_dataset_clean.csv' or 'zomato.csv' not found. Please place it in data/ folder."
+
+    stat = os.stat(df_path)
+    return _load_clean_dataset_from_path(df_path, stat.st_mtime_ns, stat.st_size)
 
 
 @st.cache_resource
