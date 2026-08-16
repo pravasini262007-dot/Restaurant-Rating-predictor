@@ -31,6 +31,24 @@ def resolve_project_path(*parts):
     return str(PROJECT_ROOT.joinpath(*parts))
 
 
+def clean_numeric(series, default_value=0.0):
+    """Convert mixed CSV values into finite numeric values for widgets and charts."""
+    numeric = pd.to_numeric(series, errors='coerce')
+    numeric = numeric.replace([np.inf, -np.inf], np.nan)
+    if numeric.notna().any():
+        fill_value = numeric.median()
+    else:
+        fill_value = default_value
+    return numeric.fillna(fill_value)
+
+
+def clean_category(series, default_value='Unknown'):
+    """Normalize category labels so Streamlit options and Plotly legends stay stable."""
+    cleaned = series.astype(str).str.strip()
+    cleaned = cleaned.replace({'': default_value, 'nan': default_value, 'None': default_value})
+    return cleaned.fillna(default_value)
+
+
 # Set Streamlit Page Configuration
 st.set_page_config(
     page_title="FoodRate AI | Restaurant Rating Predictor",
@@ -241,13 +259,38 @@ def load_clean_dataset():
             else:
                 df['votes_clean'] = 0.0
 
-            df['location'] = df[col_map.get('place_name', col_map.get('city', 'location'))] if any(k in col_map for k in ['place_name', 'city']) else 'Unknown'
-            df['rest_type'] = df[col_map.get('cuisine', 'rest_type')] if 'cuisine' in col_map else 'Other'
-            df['listed_in(type)'] = df[col_map.get('city', 'location')] if 'city' in col_map else df['location']
+            location_source = col_map.get('location') or col_map.get('place_name') or col_map.get('city')
+            rest_type_source = col_map.get('rest_type') or col_map.get('cuisine') or col_map.get('cuisines')
+            listed_source = col_map.get('listed_in(type)') or col_map.get('city') or location_source
+
+            df['location'] = df[location_source] if location_source else 'Unknown'
+            df['rest_type'] = df[rest_type_source] if rest_type_source else 'Other'
+            df['listed_in(type)'] = df[listed_source] if listed_source else df['location']
             df['online_order'] = df.get('online_order', 'No')
             df['book_table'] = df.get('book_table', 'No')
 
+        df['rate_clean'] = clean_numeric(df['rate_clean'], np.nan)
         df = df.dropna(subset=['rate_clean'])
+        if df.empty:
+            return None, "Dataset loaded, but no valid restaurant ratings were found after cleaning."
+
+        df['approx_cost_clean'] = clean_numeric(df['approx_cost_clean'], 500.0)
+        df['votes_clean'] = clean_numeric(df['votes_clean'], 0.0)
+        for optional_num in ['dining_votes', 'delivery_votes']:
+            if optional_num in df.columns:
+                df[optional_num] = clean_numeric(df[optional_num], 0.0)
+            else:
+                df[optional_num] = 0.0
+
+        for category_col, default_value in {
+            'location': 'Unknown',
+            'listed_in(type)': 'Unknown',
+            'rest_type': 'Other',
+            'online_order': 'No',
+            'book_table': 'No',
+        }.items():
+            df[category_col] = clean_category(df[category_col], default_value)
+
         return df, None
     except Exception as e:
         return None, f"Error loading dataset: {str(e)}"
@@ -463,17 +506,21 @@ def page_visualizations(df, df_err=None):
         f_col1, f_col2, f_col3, f_col4 = st.columns(4)
 
         with f_col1:
-            all_locs = sorted(df_clean['location'].unique())
+            all_locs = sorted(df_clean['location'].dropna().astype(str).unique())
             selected_locs = st.multiselect("Filter by Location", options=all_locs, default=[])
 
         with f_col2:
-            all_types = sorted(df_clean['rest_type'].unique())
+            all_types = sorted(df_clean['rest_type'].dropna().astype(str).unique())
             selected_types = st.multiselect("Filter by Cuisine / Type", options=all_types, default=[])
 
         with f_col3:
             min_c = float(df_clean['approx_cost_clean'].min())
             max_c = float(df_clean['approx_cost_clean'].max())
-            cost_range = st.slider("Cost for Two Range (₹)", min_value=min_c, max_value=max_c, value=(min_c, max_c), step=50.0)
+            if min_c == max_c:
+                st.number_input("Cost for Two Range", value=min_c, disabled=True)
+                cost_range = (min_c, max_c)
+            else:
+                cost_range = st.slider("Cost for Two Range (INR)", min_value=min_c, max_value=max_c, value=(min_c, max_c), step=50.0)
 
         with f_col4:
             online_filter = st.radio("Online Delivery Available?", options=["All", "Yes", "No"], horizontal=True)
