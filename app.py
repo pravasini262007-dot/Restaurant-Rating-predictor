@@ -156,6 +156,8 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 def find_clean_dataset_path():
     """Find the best available restaurant dataset path."""
     data_paths = [
+        resolve_project_path('data', 'restaurant_entities_clean.csv'),
+        resolve_project_path('restaurant_entities_clean.csv'),
         resolve_project_path('data', 'enhanced_zomato_dataset_clean.csv'),
         resolve_project_path('enhanced_zomato_dataset_clean.csv'),
         resolve_project_path('data', 'zomato.csv'),
@@ -163,13 +165,13 @@ def find_clean_dataset_path():
         resolve_project_path('..', 'data', 'enhanced_zomato_dataset_clean.csv'),
         resolve_project_path('..', 'data', 'zomato.csv'),
     ]
-    df_path = next((p for p in data_paths if os.path.exists(p)), None)
+    df_path = next((p for p in data_paths if os.path.exists(p) and not is_git_lfs_pointer(p)), None)
 
     if df_path is None:
         search_dirs = [PROJECT_ROOT / 'data', PROJECT_ROOT, PROJECT_ROOT.parent / 'data']
         for sdir in search_dirs:
             if sdir.exists():
-                csv_files = list(sdir.glob('*.csv'))
+                csv_files = [p for p in sdir.glob('*.csv') if not is_git_lfs_pointer(p)]
                 if csv_files:
                     df_path = str(csv_files[0])
                     break
@@ -178,6 +180,16 @@ def find_clean_dataset_path():
         return None
 
     return df_path
+
+
+def is_git_lfs_pointer(path):
+    """Return True when a CSV path contains a Git LFS pointer instead of data."""
+    try:
+        with open(path, 'rb') as f:
+            head = f.read(128)
+        return head.startswith(b'version https://git-lfs.github.com/spec/v1')
+    except OSError:
+        return False
 
 
 @st.cache_data
@@ -191,6 +203,7 @@ def _load_clean_dataset_from_path(df_path, file_mtime_ns, file_size):
         raw_df.columns = [str(c).strip().replace('\ufeff', '') for c in raw_df.columns]
         col_map = {c.lower(): c for c in raw_df.columns}
         rating_candidates = [
+            'rate_clean',
             'average_rating',
             'dining_rating',
             'rate',
@@ -266,13 +279,13 @@ def _load_clean_dataset_from_path(df_path, file_mtime_ns, file_size):
             else:
                 df['rate_clean'] = np.nan
 
-            cost_col = next((col_map[c] for c in ['approx_cost(for two people)', 'approx_cost', 'avg_price_restaurant'] if c in col_map), None)
+            cost_col = next((col_map[c] for c in ['approx_cost_clean', 'approx_cost(for two people)', 'approx_cost', 'avg_price_restaurant'] if c in col_map), None)
             if cost_col:
                 df['approx_cost_clean'] = pd.to_numeric(df[cost_col].astype(str).str.replace(',', '', regex=False).str.strip(), errors='coerce')
             else:
                 df['approx_cost_clean'] = 500.0
 
-            votes_col = next((col_map[c] for c in ['votes', 'total_votes'] if c in col_map), None)
+            votes_col = next((col_map[c] for c in ['votes_clean', 'votes', 'total_votes'] if c in col_map), None)
             if votes_col:
                 df['votes_clean'] = pd.to_numeric(df[votes_col], errors='coerce').fillna(0)
             else:
