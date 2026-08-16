@@ -190,6 +190,14 @@ def _load_clean_dataset_from_path(df_path, file_mtime_ns, file_size):
         raw_df = pd.read_csv(df_path)
         raw_df.columns = [str(c).strip().replace('\ufeff', '') for c in raw_df.columns]
         col_map = {c.lower(): c for c in raw_df.columns}
+        rating_candidates = [
+            'average_rating',
+            'dining_rating',
+            'rate',
+            'rating',
+            'avg_rating_restaurant',
+            'delivery_rating',
+        ]
 
         is_item_level = 'item_name' in col_map and 'restaurant_name' in col_map
 
@@ -217,11 +225,12 @@ def _load_clean_dataset_from_path(df_path, file_mtime_ns, file_size):
             df['listed_in(type)'] = grouped[city_col].first().fillna('Unknown')
             df['rest_type'] = grouped[col_map['cuisine']].apply(most_common_cuisine) if 'cuisine' in col_map else 'Other'
 
-            if 'average_rating' in col_map:
-                rating_source = pd.to_numeric(raw_df[col_map['average_rating']], errors='coerce')
-                df['rate_clean'] = rating_source.groupby([raw_df[rest_name_col], raw_df[place_col], raw_df[city_col]], dropna=False).apply(first_valid)
-            elif 'dining_rating' in col_map:
-                rating_source = pd.to_numeric(raw_df[col_map['dining_rating']], errors='coerce')
+            rating_col = next((col_map[c] for c in rating_candidates if c in col_map), None)
+            if rating_col:
+                rating_source = pd.to_numeric(
+                    raw_df[rating_col].astype(str).str.replace('/5', '', regex=False).str.strip(),
+                    errors='coerce'
+                )
                 df['rate_clean'] = rating_source.groupby([raw_df[rest_name_col], raw_df[place_col], raw_df[city_col]], dropna=False).apply(first_valid)
             else:
                 df['rate_clean'] = np.nan
@@ -251,7 +260,7 @@ def _load_clean_dataset_from_path(df_path, file_mtime_ns, file_size):
             df = df.reset_index(drop=True)
         else:
             df = raw_df.drop_duplicates().copy()
-            target_col = next((col_map[c] for c in ['rate', 'average_rating', 'dining_rating', 'rating'] if c in col_map), None)
+            target_col = next((col_map[c] for c in rating_candidates if c in col_map), None)
             if target_col:
                 df['rate_clean'] = pd.to_numeric(df[target_col].astype(str).str.replace('/5', '', regex=False).str.strip(), errors='coerce')
             else:
@@ -282,7 +291,19 @@ def _load_clean_dataset_from_path(df_path, file_mtime_ns, file_size):
         df['rate_clean'] = clean_numeric(df['rate_clean'], np.nan)
         df = df.dropna(subset=['rate_clean'])
         if df.empty:
-            return None, "Dataset loaded, but no valid restaurant ratings were found after cleaning."
+            rating_debug = {
+                col_map[c]: int(pd.to_numeric(
+                    raw_df[col_map[c]].astype(str).str.replace('/5', '', regex=False).str.strip(),
+                    errors='coerce'
+                ).notna().sum())
+                for c in rating_candidates
+                if c in col_map
+            }
+            return None, (
+                "Dataset loaded, but no valid restaurant ratings were found after cleaning. "
+                f"Source: {df_path}. Columns: {', '.join(raw_df.columns)}. "
+                f"Numeric rating counts before cleaning: {rating_debug}."
+            )
 
         df['approx_cost_clean'] = clean_numeric(df['approx_cost_clean'], 500.0)
         df['votes_clean'] = clean_numeric(df['votes_clean'], 0.0)
